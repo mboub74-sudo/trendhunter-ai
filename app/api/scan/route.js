@@ -1,7 +1,73 @@
-import {NextResponse} from 'next/server';
-export const runtime='nodejs';
-const allowed=['mealrivo.com','besteverrecipes.com','luncheanddinner.com'];
-function hostAllowed(host){return allowed.some(h=>host===h||host==='www.'+h)}
-async function load(url){const u=new URL(url);if(u.protocol!=='https:'||!hostAllowed(u.hostname))throw Error('Only approved recipe domains are allowed in this MVP');const r=await fetch(u.toString(),{signal:AbortSignal.timeout(7000),redirect:'error',headers:{'user-agent':'TrendHunterAI/0.1 sitemap research'}});if(!r.ok)throw Error('HTTP '+r.status);const txt=await r.text();if(txt.length>2000000)throw Error('Sitemap too large');return txt}
-const extract=(xml,tag)=>Array.from(xml.matchAll(new RegExp('<(?:[\\w-]+:)?'+tag+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[\\w-]+:)?'+tag+'>','gi')),m=>m[1].trim().replaceAll('&amp;','&'));
-export async function POST(req){try{const b=await req.json();const sites=Array.isArray(b.sites)?b.sites.slice(0,10):[];const keyword=String(b.keyword||'').trim().toLowerCase().slice(0,100);if(!keyword)return NextResponse.json({error:'Keyword is required'},{status:400});let results=[];for(const site of sites){try{const base=new URL(site);if(!hostAllowed(base.hostname)||base.protocol!=='https:')continue;const origin=base.origin;const queue=[origin+'/sitemap_index.xml',origin+'/wp-sitemap.xml',origin+'/sitemap.xml'];const seen=new Set();let loaded=0;while(queue.length&&loaded<12){const sitemap=queue.shift();if(seen.has(sitemap))continue;seen.add(sitemap);let xml;try{xml=await load(sitemap)}catch{continue}loaded++;if(xml.includes('<sitemapindex')){for(const loc of extract(xml,'loc').slice(0,15)){try{const u=new URL(loc);if(u.origin===origin)queue.push(u.toString())}catch{}}}else{const blocks=xml.match(/<url(?:\\s[^>]*)?>[\\s\\S]*?<\\/url>/gi)||[];for(const block of blocks){const loc=extract(block,'loc')[0];if(!loc)continue;try{const u=new URL(loc);if(u.origin!==origin||!u.pathname.toLowerCase().includes(keyword))continue;results.push({site:base.hostname,url:u.toString(),lastmod:extract(block,'lastmod')[0]||''})}catch{}}}}}catch{}}results=Array.from(new Map(results.map(x=>[x.url,x])).values()).slice(0,500).sort((a,b)=>b.lastmod.localeCompare(a.lastmod));return NextResponse.json({results})}catch(e){return NextResponse.json({error:e.message||'Scan failed'},{status:400})}}
+import { NextResponse } from 'next/server';
+
+export const runtime = 'nodejs';
+const approved = new Set(['mealrivo.com', 'besteverrecipes.com', 'luncheanddinner.com']);
+const allowedHost = (host) => approved.has(host.replace(/^www\./, ''));
+
+function elements(xml, tag) {
+  const expression = new RegExp('<(?:[a-zA-Z0-9_-]+:)?' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[a-zA-Z0-9_-]+:)?' + tag + '>', 'gi');
+  return Array.from(xml.matchAll(expression), (match) => match[1].trim().replaceAll('&amp;', '&'));
+}
+
+async function getSitemap(address) {
+  const url = new URL(address);
+  if (url.protocol !== 'https:' || !allowedHost(url.hostname)) throw new Error('Domain not approved');
+  const response = await fetch(url.toString(), {
+    redirect: 'error',
+    signal: AbortSignal.timeout(7000),
+    headers: { 'user-agent': 'TrendHunterAI/0.1 sitemap discovery' }
+  });
+  if (!response.ok) throw new Error('Sitemap HTTP ' + response.status);
+  const xml = await response.text();
+  if (xml.length > 2000000) throw new Error('Sitemap too large');
+  return xml;
+}
+
+export async function POST(request) {
+  try {
+    const body = await request.json();
+    const keyword = String(body.keyword || '').trim().toLowerCase().slice(0, 100);
+    if (!keyword) return NextResponse.json({ error: 'Keyword required' }, { status: 400 });
+    const sites = Array.isArray(body.sites) ? body.sites.slice(0, 10) : [];
+    const results = [];
+    for (const site of sites) {
+      try {
+        const base = new URL(site);
+        if (base.protocol !== 'https:' || !allowedHost(base.hostname)) continue;
+        const queue = ['/sitemap_index.xml', '/wp-sitemap.xml', '/sitemap.xml'].map((p) => base.origin + p);
+        const visited = new Set();
+        while (queue.length && visited.size < 12) {
+          const sitemap = queue.shift();
+          if (visited.has(sitemap)) continue;
+          visited.add(sitemap);
+          let xml;
+          try { xml = await getSitemap(sitemap); } catch { continue; }
+          if (/<sitemapindex\b/i.test(xml)) {
+            for (const loc of elements(xml, 'loc').slice(0, 15)) {
+              try {
+                const target = new URL(loc);
+                if (target.origin === base.origin) queue.push(target.href);
+              } catch {}
+            }
+          } else {
+            const blocks = xml.match(/<url(?:\s[^>]*)?>[\s\S]*?<\/url>/gi) || [];
+            for (const block of blocks) {
+              const loc = elements(block, 'loc')[0];
+              if (!loc) continue;
+              try {
+                const target = new URL(loc);
+                if (target.origin !== base.origin || !target.pathname.toLowerCase().includes(keyword)) continue;
+                results.push({ site: base.hostname, url: target.href, lastmod: elements(block, 'lastmod')[0] || '' });
+              } catch {}
+            }
+          }
+        }
+      } catch {}
+    }
+    const unique = Array.from(new Map(results.map((row) => [row.url, row])).values());
+    unique.sort((a, b) => b.lastmod.localeCompare(a.lastmod));
+    return NextResponse.json({ results: unique.slice(0, 500) });
+  } catch (error) {
+    return NextResponse.json({ error: error.message || 'Scan failed' }, { status: 400 });
+  }
+}
