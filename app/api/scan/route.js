@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
-const approved = new Set(['mealrivo.com', 'besteverrecipes.com', 'luncheanddinner.com']);
+const approved = new Set(['mealrivo.com', 'besteverrecipes.com', 'luncheanddinner.com', 'allrecipes.com', 'simplyrecipes.com', 'budgetbytes.com', 'sallysbakingaddiction.com', 'skinnytaste.com', 'thepioneerwoman.com', 'delish.com', 'wellplated.com', 'recipetineats.com', 'loveandlemons.com', 'minimalistbaker.com']);
 const allowedHost = (host) => approved.has(host.replace(/^www\./, ''));
 
 function elements(xml, tag) {
