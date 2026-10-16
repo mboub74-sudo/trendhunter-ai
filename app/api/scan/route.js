@@ -56,7 +56,7 @@ export async function POST(request) {
               if (!loc) continue;
               try {
                 const target = new URL(loc);
-                if (target.origin !== base.origin || !target.pathname.toLowerCase().includes(keyword)) continue;
+                if (target.origin !== base.origin || !decodeURIComponent(target.pathname).toLowerCase().replace(/[-_]+/g, ' ').includes(keyword.replace(/[-_]+/g, ' '))) continue;
                 results.push({ site: base.hostname, url: target.href, lastmod: elements(block, 'lastmod')[0] || '' });
               } catch {}
             }
